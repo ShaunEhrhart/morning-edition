@@ -128,7 +128,10 @@ def gather_articles():
             body = safe(rss_body if pool["kind"] == "rss" else espn_body, c)
             if body:
                 # drop the headline repeated as a paragraph and leftover bylines/labels
-                body["paras"] = [p for p in body["paras"] if p.lower() != key and len(p.split()) >= 3]
+                paras = [p for p in body["paras"] if p.lower() != key and len(p.split()) >= 3]
+                # bbc tacks "related stories" on the end, each marked "- Published"
+                cut = next((n for n, p in enumerate(paras) if n >= 3 and p.startswith("- Published")), None)
+                body["paras"] = [p for p in paras[:cut] if not p.startswith("- Published")]
             if body and sum(len(p.split()) for p in body["paras"]) >= MIN_WORDS:
                 seen.add(key)
                 pool["got"].append({**c, **body, "section": pool["name"]})
