@@ -285,9 +285,21 @@ def make_audio(segments):
                     await asyncio.sleep(3)
             return b""
 
+    def pieces(text, limit=1200):
+        # short requests fail less often, and a failed piece costs a paragraph, not an article
+        out, cur = [], ""
+        for para in text.split("\n"):
+            if cur and len(cur) + len(para) > limit:
+                out.append(cur)
+                cur = ""
+            cur = f"{cur}\n{para}" if cur else para
+        return out + [cur] if cur else out
+
     async def record_all():
-        gate = asyncio.Semaphore(4)
-        return await asyncio.gather(*(record(n, s[2], gate) for n, s in enumerate(segments)))
+        gate = asyncio.Semaphore(8)
+        jobs = [[record(n, p, gate) for p in pieces(s[2])] for n, s in enumerate(segments)]
+        done = await asyncio.gather(*(asyncio.gather(*j) for j in jobs))
+        return [b"".join(parts) for parts in done]
 
     clips = asyncio.run(record_all())
     audio, chapters = bytearray(), []
