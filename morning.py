@@ -262,7 +262,7 @@ def render_article(a, i):
 CSS = """
 :root{--paper:#f5f0e4;--ink:#1a1a1a;--rule:#1a1a1a;--muted:#5b554a;--up:#1d5c2e;--dn:#8a1c1c}
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;touch-action:pan-x pan-y}
 body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 'Libre Caslon Text',Georgia,serif;
  padding:env(safe-area-inset-top) 16px 40px}
 .wrap{max-width:860px;margin:0 auto}
@@ -318,7 +318,7 @@ def build_page():
     # reflection sits right after the lead story
     body = "".join(stories[:1]) + reflection + "".join(stories[1:])
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Morning">
@@ -327,7 +327,8 @@ def build_page():
 <title>The Morning Edition</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
-<style>{CSS}</style></head><body><div class="wrap">
+<style>{CSS}</style>
+<script>document.addEventListener("gesturestart",function(e){{e.preventDefault()}})</script></head><body><div class="wrap">
 <header class="mast"><h1>The Morning Edition</h1>
 <div class="dateline"><span>{now:%A}</span><span>{now:%B} {now.day}, {now.year}</span><span>Norman, Okla.</span></div></header>
 <div class="boxes">{boxes}</div>
