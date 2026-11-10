@@ -259,6 +259,88 @@ def render_article(a, i):
 <a class="top" href="#contents">↑ contents</a></article>"""
 
 
+# ---------- audio ----------
+
+VOICE = "en-US-AndrewNeural"
+BYTES_PER_SEC = 48000 / 8  # edge-tts default output is 48 kbps constant-bitrate mp3
+
+
+def make_audio(segments):
+    # one mp3 for the whole edition so it keeps playing with the screen locked;
+    # chapters mark where each piece starts so next/prev can jump between them
+    import asyncio
+    import edge_tts
+
+    async def record(n, text, gate):
+        async with gate:
+            for attempt in range(3):
+                try:
+                    buf = bytearray()
+                    async for chunk in edge_tts.Communicate(text, VOICE).stream():
+                        if chunk["type"] == "audio":
+                            buf += chunk["data"]
+                    return bytes(buf)
+                except Exception as e:
+                    print(f"[retry] audio segment {n} attempt {attempt + 1}: {e}", file=sys.stderr)
+                    await asyncio.sleep(3)
+            return b""
+
+    async def record_all():
+        gate = asyncio.Semaphore(4)
+        return await asyncio.gather(*(record(n, s[2], gate) for n, s in enumerate(segments)))
+
+    clips = asyncio.run(record_all())
+    audio, chapters = bytearray(), []
+    for (sid, title, _), clip in zip(segments, clips):
+        if not clip:
+            continue  # a piece that wouldn't record is skipped, the rest still plays
+        chapters.append({"id": sid, "title": title, "start": round(len(audio) / BYTES_PER_SEC, 2)})
+        audio += clip
+    (SITE / "edition.mp3").write_bytes(audio)
+    return chapters
+
+
+PLAYER_JS = """
+const A=document.getElementById('aud'),CH=JSON.parse(document.getElementById('chapters').textContent),
+ T=document.getElementById('ptitle'),P=document.getElementById('pplay'),BAR=document.getElementById('pbar'),
+ KEY='pos-'+document.body.dataset.ed;
+let cur=-1;
+const idx=t=>{let i=0;CH.forEach((c,n)=>{if(t>=c.start)i=n});return i};
+function go(i,play=true){i=Math.max(0,Math.min(CH.length-1,i));
+ const seek=()=>{A.currentTime=CH[i].start;if(play)A.play()};
+ A.readyState>=1?seek():A.addEventListener('loadedmetadata',seek,{once:true});A.load&&A.readyState<1&&A.load()}
+function sync(){const i=idx(A.currentTime);
+ if(i!==cur){cur=i;T.textContent=CH[i].title;
+  if('mediaSession'in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:CH[i].title,
+   artist:'The Morning Edition',artwork:[{src:'icon.png',sizes:'512x512',type:'image/png'}]})}
+ if(A.duration)BAR.style.width=(A.currentTime/A.duration*100)+'%';
+ try{localStorage.setItem(KEY,A.currentTime)}catch(e){}}
+A.addEventListener('timeupdate',sync);
+A.addEventListener('play',()=>P.textContent='❚❚');A.addEventListener('pause',()=>P.textContent='▶');
+P.onclick=()=>{if(A.paused){if(A.currentTime===0){let s=0;try{s=+localStorage.getItem(KEY)||0}catch(e){}
+ if(s){A.currentTime=s}}A.play()}else A.pause()};
+document.getElementById('pprev').onclick=()=>{const i=idx(A.currentTime);
+ go(A.currentTime-CH[i].start>3?i:i-1)};
+document.getElementById('pnext').onclick=()=>go(idx(A.currentTime)+1);
+document.querySelectorAll('[data-ch]').forEach(b=>b.onclick=()=>go(+b.dataset.ch));
+if('mediaSession'in navigator){const m=navigator.mediaSession;
+ m.setActionHandler('play',()=>A.play());m.setActionHandler('pause',()=>A.pause());
+ m.setActionHandler('previoustrack',()=>document.getElementById('pprev').click());
+ m.setActionHandler('nexttrack',()=>go(idx(A.currentTime)+1));}
+"""
+
+
+def render_player(chapters, now):
+    if not chapters:
+        return ""
+    return f"""<div class="player"><div class="pbar"><i id="pbar"></i></div><div class="prow">
+<button id="pprev" aria-label="Previous">⏮</button><button id="pplay" class="pp" aria-label="Play">▶</button>
+<button id="pnext" aria-label="Next">⏭</button><span id="ptitle">Listen to today's edition</span></div></div>
+<audio id="aud" preload="none" src="edition.mp3?v={now:%Y%m%d}"></audio>
+<script type="application/json" id="chapters">{json.dumps(chapters)}</script>
+<script>{PLAYER_JS}</script>"""
+
+
 CSS = """
 :root{--paper:#f5f0e4;--ink:#1a1a1a;--rule:#1a1a1a;--muted:#5b554a;--up:#1d5c2e;--dn:#8a1c1c}
 *{box-sizing:border-box}
@@ -297,24 +379,55 @@ article h2{font:700 26px/1.15 'Playfair Display',serif;margin:6px 0 10px}
 .reflection{background:#ece5d3;padding:18px 14px;margin:18px 0;border:1px solid var(--rule)}
 .reflection h2{margin-bottom:2px}.byline{font-style:italic;color:var(--muted);margin-bottom:12px}
 .top{display:inline-block;margin-top:6px;font-size:12px;color:var(--muted);text-decoration:none}
-footer{text-align:center;font-size:12px;color:var(--muted);padding:20px 0}
+footer{text-align:center;font-size:12px;color:var(--muted);padding:20px 0 90px}
+.listen{font:700 11px/1 'Libre Caslon Text',serif;text-transform:uppercase;letter-spacing:.1em;
+ background:none;border:1px solid var(--ink);color:var(--ink);padding:6px 10px;margin:0 0 12px;cursor:pointer}
+.player{position:fixed;left:0;right:0;bottom:0;background:var(--ink);color:var(--paper);
+ padding:0 16px calc(10px + env(safe-area-inset-bottom))}
+.pbar{height:3px;background:#444;margin:0 -16px 8px}.pbar i{display:block;height:100%;width:0;background:var(--paper)}
+.prow{display:flex;align-items:center;gap:10px;max-width:860px;margin:0 auto}
+.prow button{background:none;border:0;color:var(--paper);font-size:20px;padding:6px;cursor:pointer}
+.prow .pp{width:44px;height:44px;border:1px solid var(--paper);border-radius:50%;font-size:16px}
+#ptitle{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
 """
 
 
 def build_page():
     now = datetime.now(TZ)
     articles = gather_articles()
+    wx = safe(weather, fallback=[])
+    phil = safe(philosophy)
     boxes = (
-        render_weather(safe(weather, fallback=[]))
+        render_weather(wx)
         + render_markets(safe(markets, fallback=[]))
         + render_otd(safe(on_this_day, fallback=[]))
     )
-    reflection = render_philosophy(safe(philosophy))
+    reflection = render_philosophy(phil)
+
+    # listening order matches reading order: intro, lead, reflection, the rest
+    intro = f"Good morning. This is the Morning Edition for {now:%A}, {now:%B} {now.day}."
+    if wx:
+        intro += f" Weather in Norman. {wx[0]['name']}: {wx[0]['detailedForecast']}"
+    segs = [("top", "Today's weather", intro)]
+    for i, a in enumerate(articles):
+        segs.append((f"a{i}", a["title"], f"{a['section']}. {a['title']}.\n" + "\n".join(a["paras"])))
+        if i == 0 and phil:
+            segs.append(("reflection", f"Reflection · {phil['author']}",
+                         f"The daily reflection. From {phil['author']}, {phil['work']}.\n" + "\n".join(phil["paras"])))
+    chapters = safe(make_audio, segs, fallback=[]) if "--no-audio" not in sys.argv else []
+    player = render_player(chapters, now)
+    ch_index = {c["id"]: n for n, c in enumerate(chapters)}
+
+    def listen(sid):
+        return f'<button class="listen" data-ch="{ch_index[sid]}">▶ Listen</button>' if sid in ch_index else ""
+
+    reflection = reflection.replace('<div class="body">', listen("reflection") + '<div class="body">', 1)
     contents = "".join(
         f"<li><a href='#a{i}'><span class='sec'>{e(a['section'])}</span> {e(a['title'])}</a></li>"
         for i, a in enumerate(articles)
     ) + "<li><a href='#reflection'><span class='sec'>Reflection</span> The Daily Reflection</a></li>"
-    stories = [render_article(a, i) for i, a in enumerate(articles)]
+    stories = [render_article(a, i).replace('<div class="body">', listen(f"a{i}") + '<div class="body">', 1)
+               for i, a in enumerate(articles)]
     # reflection sits right after the lead story
     body = "".join(stories[:1]) + reflection + "".join(stories[1:])
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -328,14 +441,14 @@ def build_page():
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@700;900&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
 <style>{CSS}</style>
-<script>document.addEventListener("gesturestart",function(e){{e.preventDefault()}})</script></head><body><div class="wrap">
+<script>document.addEventListener("gesturestart",function(e){{e.preventDefault()}})</script></head><body data-ed="{now:%Y%m%d}"><div class="wrap">
 <header class="mast"><h1>The Morning Edition</h1>
 <div class="dateline"><span>{now:%A}</span><span>{now:%B} {now.day}, {now.year}</span><span>Norman, Okla.</span></div></header>
 <div class="boxes">{boxes}</div>
 <nav class="contents" id="contents"><h3>In Today's Edition</h3><ol>{contents}</ol></nav>
 {body}
 <footer>Printed {now:%-I:%M %p} · {len(articles)} stories</footer>
-</div></body></html>"""
+</div>{player}</body></html>"""
 
 
 if __name__ == "__main__":
