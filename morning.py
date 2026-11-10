@@ -273,7 +273,7 @@ def make_audio(segments):
 
     async def record(n, text, gate):
         async with gate:
-            for attempt in range(3):
+            for attempt in range(5):
                 try:
                     buf = bytearray()
                     async for chunk in edge_tts.Communicate(text, VOICE).stream():
@@ -282,7 +282,7 @@ def make_audio(segments):
                     return bytes(buf)
                 except Exception as e:
                     print(f"[retry] audio segment {n} attempt {attempt + 1}: {e}", file=sys.stderr)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(5 * (attempt + 1))
             return b""
 
     def pieces(text, limit=1200):
@@ -296,7 +296,7 @@ def make_audio(segments):
         return out + [cur] if cur else out
 
     async def record_all():
-        gate = asyncio.Semaphore(8)
+        gate = asyncio.Semaphore(3)
         jobs = [[record(n, p, gate) for p in pieces(s[2])] for n, s in enumerate(segments)]
         done = await asyncio.gather(*(asyncio.gather(*j) for j in jobs))
         return [b"".join(parts) for parts in done]
