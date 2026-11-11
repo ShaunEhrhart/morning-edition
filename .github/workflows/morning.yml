@@ -1,7 +1,7 @@
 name: morning edition
 on:
   schedule:
-    - cron: "15 15 * * *"  # temp test: 9:15am central
+    - cron: "23 10 * * *"  # backup: 4:23am central (main trigger is cron-job.org)
   workflow_dispatch:
 
 permissions:
